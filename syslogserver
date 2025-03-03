@@ -1,0 +1,95 @@
+import socket
+import threading
+import datetime
+
+class SyslogServer:
+    def __init__(self, host='0.0.0.0', port=514):
+        self.host = host
+        self.port = port
+        self.sock = None
+        self.running = False
+
+    def start_server(self):
+        """Inicia el servidor Syslog"""
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.bind((self.host, self.port))
+            self.running = True
+            self.print_header()
+            print(f"✓ Servidor Syslog iniciado en {self.host}:{self.port}")
+            print(f"Esperando mensajes...\n{'='*50}")
+            
+            thread = threading.Thread(target=self.receive_messages)
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            print(f"✗ Error al iniciar el servidor: {e}")
+            self.running = False
+
+    def print_header(self):
+        """Imprime un encabezado en la consola"""
+        print("\n" + "="*50)
+        print("SERVIDOR SYSLOG - xAI")
+        print(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*50)
+
+    def format_message(self, timestamp, addr, message):
+        """Formatea el mensaje para mostrar en consola"""
+        try:
+            # Intentar parsear el mensaje Syslog básico
+            if message.startswith('<'):
+                pri_end = message.index('>')
+                priority = message[1:pri_end]
+                content = message[pri_end + 1:]
+            else:
+                priority = "N/A"
+                content = message
+                
+            output = f"\n[TIMESTAMP]: {timestamp}"
+            output += f"\n[FROM]: {addr[0]}:{addr[1]}"
+            output += f"\n[PRIORITY]: {priority}"
+            output += f"\n[MESSAGE]: {content}"
+            output += f"\n{'-'*50}"
+            return output
+            
+        except:
+            return f"\n[TIMESTAMP]: {timestamp}\n[FROM]: {addr}\n[MESSAGE]: {message}\n{'-'*50}"
+
+    def receive_messages(self):
+        """Recibe y muestra los mensajes Syslog"""
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(4096)
+                if data:
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    message = data.decode('utf-8', errors='ignore')
+                    formatted_message = self.format_message(timestamp, addr, message)
+                    print(formatted_message)
+                    
+            except Exception as e:
+                print(f"\n✗ Error al recibir mensaje: {e}\n{'-'*50}")
+
+    def stop_server(self):
+        """Detiene el servidor"""
+        self.running = False
+        if self.sock:
+            self.sock.close()
+        print(f"\n{'='*50}\n✓ Servidor detenido\n{'='*50}")
+
+def main():
+    syslog_server = SyslogServer()
+    
+    try:
+        syslog_server.start_server()
+        while True:
+            command = input("Escribe 'stop' para detener el servidor: ")
+            if command.lower() == 'stop':
+                syslog_server.stop_server()
+                break
+                
+    except KeyboardInterrupt:
+        syslog_server.stop_server()
+
+if __name__ == "__main__":
+    main()
