@@ -1,0 +1,139 @@
+import socket
+import threading
+import datetime
+import re
+from geoip2.database import Reader
+import geoip2.errors
+
+class SyslogServer:
+    def __init__(self, host='0.0.0.0', port=514):
+        self.host = host
+        self.port = port
+        self.sock = None
+        self.running = False
+        # Cargar la base de datos GeoLite2 (debes descargarla primero)
+        try:
+            self.geo_reader = Reader('GeoLite2-Country.mmdb')
+        except Exception as e:
+            print(f"Error cargando base de datos GeoIP: {e}")
+            self.geo_reader = None
+
+    def start_server(self):
+        """Inicia el servidor Syslog"""
+        try:
+            self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.sock.bind((self.host, self.port))
+            self.running = True
+            self.print_header()
+            print(f"✓ Servidor Syslog iniciado en {self.host}:{self.port}")
+            print(f"Esperando mensajes...\n{'='*50}")
+            
+            thread = threading.Thread(target=self.receive_messages)
+            thread.daemon = True
+            thread.start()
+            
+        except Exception as e:
+            print(f"✗ Error al iniciar el servidor: {e}")
+            self.running = False
+
+    def print_header(self):
+        """Imprime un encabezado en la consola"""
+        print("\n" + "="*50)
+        print("SERVIDOR SYSLOG - xAI")
+        print(f"Fecha: {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+        print("="*50)
+
+    def get_country_from_ip(self, ip):
+        """Obtiene el país de una IP pública"""
+        if not self.geo_reader:
+            return "GeoIP no disponible"
+        
+        # Verificar si es una IP pública (excluye privadas)
+        private_ranges = [
+            re.compile(r'^10\..*'),
+            re.compile(r'^172\.(1[6-9]|2[0-9]|3[0-1])\..*'),
+            re.compile(r'^192\.168\..*')
+        ]
+        
+        if any(pattern.match(ip) for pattern in private_ranges):
+            return "IP privada"
+            
+        try:
+            response = self.geo_reader.country(ip)
+            return response.country.name or "País desconocido"
+        except geoip2.errors.AddressNotFoundError:
+            return "No encontrado en base de datos"
+        except Exception:
+            return "Error al buscar país"
+
+    def format_message(self, timestamp, addr, message):
+        """Formatea el mensaje para mostrar en consola"""
+        try:
+            if message.startswith('<'):
+                pri_end = message.index('>')
+                priority = message[1:pri_end]
+                content = message[pri_end + 1:]
+            else:
+                priority = "N/A"
+                content = message
+                
+            # Buscar IPs en el mensaje
+            ip_pattern = r'\b(?:\d{1,3}\.){3}\d{1,3}\b'
+            ips = re.findall(ip_pattern, content)
+            ip_info = ""
+            if ips:
+                ip_info = "\n[IPs DETECTADAS]:"
+                for ip in ips:
+                    country = self.get_country_from_ip(ip)
+                    ip_info += f"\n  {ip} -> {country}"
+
+            output = f"\n[TIMESTAMP]: {timestamp}"
+            output += f"\n[FROM]: {addr[0]}:{addr[1]}"
+            output += f"\n[PRIORITY]: {priority}"
+            output += f"\n[MESSAGE]: {content}"
+            output += ip_info
+            output += f"\n{'-'*50}"
+            return output
+            
+        except:
+            return f"\n[TIMESTAMP]: {timestamp}\n[FROM]: {addr}\n[MESSAGE]: {message}\n{'-'*50}"
+
+    def receive_messages(self):
+        """Recibe y muestra los mensajes Syslog"""
+        while self.running:
+            try:
+                data, addr = self.sock.recvfrom(4096)
+                if data:
+                    timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    message = data.decode('utf-8', errors='ignore')
+                    formatted_message = self.format_message(timestamp, addr, message)
+                    print(formatted_message)
+                    
+            except Exception as e:
+                print(f"\n✗ Error al recibir mensaje: {e}\n{'-'*50}")
+
+    def stop_server(self):
+        """Detiene el servidor"""
+        self.running = False
+        if self.sock:
+            self.sock.close()
+        if self.geo_reader:
+            self.geo_reader.close()
+        print(f"\n{'='*50}\n✓ Servidor detenido\n{'='*50}")
+
+def main():
+    syslog_server = SyslogServer()
+    
+    try:
+        syslog_server.start_server()
+        while True:
+            command = input("Escribe 'stop' para detener el servidor: ")
+            if command.lower() == 'stop':
+                syslog_server.stop_server()
+                break
+                
+    except KeyboardInterrupt:
+        syslog_server.stop_server()
+
+if __name__ == "__main__":
+    main()
